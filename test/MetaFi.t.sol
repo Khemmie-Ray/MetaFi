@@ -20,11 +20,9 @@ import "forge-std/console.sol";
 import {MetaFi} from "../src/MetaFi.sol";
 
 contract TestPointsHook is Test, Deployers {
-	
+    MetaFi hook;
 
-	MetaFi hook;
-
-	function setUp() public {
-		// TODO
-	}
+    function setUp() public {
+        // TODO
+    }
 }

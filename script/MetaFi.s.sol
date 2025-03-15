@@ -12,7 +12,7 @@ contract MetaFIScript is Script {
     function run() public {
         vm.startBroadcast();
 
-        metafi = new MetaFi();
+        // metafi = new MetaFi();
 
         vm.stopBroadcast();
     }
