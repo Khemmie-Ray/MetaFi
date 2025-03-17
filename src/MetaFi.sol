@@ -12,18 +12,47 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {Currency} from "v4-core/types/Currency.sol";
+
+import {CurrencySettler} from "v4-periphery/lib/v4-core/test/utils/CurrencySettler.sol";
+
+import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
+import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/OwnerIsCreator.sol";
+import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
+import {IERC20} from
+    "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.3/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from
+    "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.3/contracts/token/ERC20/utils/SafeERC20.sol";
+
+import {console2} from "forge-std/console2.sol";
+
 contract MetaFi is BaseHook, ERC20 {
+    event MessageID();
+
+    using StateLibrary for IPoolManager;
+    using PoolIdLibrary for PoolKey;
+    using BalanceDeltaLibrary for BalanceDelta;
+    using CurrencySettler for Currency;
     // Use CurrencyLibrary and BalanceDeltaLibrary
     // to add some helper functions over the Currency and BalanceDelta
     // data types
     using CurrencyLibrary for Currency;
     using BalanceDeltaLibrary for BalanceDelta;
 
+    uint64 _destinationChainSelector;
+    IRouterClient private s_router;
+    IERC20 private s_linkToken;
+    address payable weth;
+
     // Initialize BaseHook and ERC20
-    constructor(IPoolManager _manager, string memory _name, string memory _symbol)
-        BaseHook(_manager)
-        ERC20(_name, _symbol, 18)
-    {}
+    constructor(IPoolManager _manager, address _router, address _link, address _weth) BaseHook(_manager) {
+        s_router = IRouterClient(_router);
+        s_linkToken = IERC20(_link);
+        weth = _weth;
+    }
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
@@ -34,7 +63,7 @@ contract MetaFi is BaseHook, ERC20 {
             afterAddLiquidity: true,
             afterRemoveLiquidity: true,
             beforeSwap: false,
-            afterSwap: false,
+            afterSwap: true,
             beforeDonate: false,
             afterDonate: false,
             beforeSwapReturnDelta: false,
@@ -44,46 +73,70 @@ contract MetaFi is BaseHook, ERC20 {
         });
     }
 
-    // function beforeAddLiquidity(
-    //     address,
-    //     PoolKey calldata key,
-    //     IPoolManager.ModifyLiquidityParams calldata,
-    //     bytes calldata
-    // ) external override returns (bytes4) {
-    //     // beforeAddLiquidityCount[key.toId()]++;
-    //     return this.beforeAddLiquidity.selector;
-    // }
+    function _afterSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata swapParams,
+        BalanceDelta delta,
+        bytes calldata extraData
+    ) internal override returns (bytes4, int128) {
+        bool stakeOnEigen = abi.decode(extraData, (bool));
 
-    // function afterAddLiquidity(
-    //     address,
-    //     PoolKey calldata key,
-    //     IPoolManager.ModifyLiquidityParams calldata,
-    //     BalanceDelta delta,
-    //     BalanceDelta,
-    //     bytes calldata hookData
-    // ) external override onlyPoolManager returns (bytes4, BalanceDelta) {
-    //     // add your logic here
-    //     return (this.afterAddLiquidity.selector, delta);
-    // }
+        if (stakeOnEigen) {
+            int256 wethDelta = key.currency1 == address(weth) ? delta.amount1() : delta.amount0();
+            if (wethDelta <= 0) return bytes4(0);
+            // ccip and stake on Eigen...
 
-    // function beforeRemoveLiquidity(
-    //     address,
-    //     PoolKey calldata key,
-    //     IPoolManager.ModifyLiquidityParams calldata,
-    //     bytes calldata
-    // ) external override returns (bytes4) {
-    //     // beforeRemoveLiquidityCount[key.toId()]++;
-    //     return this.beforeRemoveLiquidity.selector;
-    // }
+            Client.EVM2AnyMessage memory evm2AnyMessage = _buildCCIPMessage(
+                _receiver,
+                _token,
+                _amount,
+                abi.encode(msg.sender, wethDelta), // hopefully owner here
+                address(0)
+            );
 
-    // function afterRemoveLiquidity(
-    //     address,
-    //     PoolKey calldata,
-    //     IPoolManager.ModifyLiquidityParams calldata,
-    //     BalanceDelta delta,
-    //     BalanceDelta,
-    //     bytes calldata
-    // ) external virtual returns (bytes4, BalanceDelta) {
-    //     return (this.afterRemoveLiquidity.selector, delta);
-    // }
+            uint256 fees = s_router.getFee(_destinationChainSelector, evm2AnyMessage);
+
+            //    s_linkToken.approve(address(s_router), fees);
+
+            // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
+            IERC20(weth).approve(address(s_router), _amount);
+
+            // Send the message through the router and store the returned message ID
+            messageId = s_router.ccipSend{value: fees}(_destinationChainSelector, evm2AnyMessage);
+
+            emit MessageId(messageId);
+        }
+    }
+
+    function _buildCCIPMessage(
+        address _receiver,
+        address _token,
+        uint256 _amount,
+        bytes _user_info,
+        address _feeTokenAddress
+    ) private pure returns (Client.EVM2AnyMessage memory) {
+        // Set the token amounts
+        Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](1);
+        tokenAmounts[0] = Client.EVMTokenAmount({token: _token, amount: _amount});
+
+        // Create an EVM2AnyMessage struct in memory with necessary information for sending a cross-chain message
+        return Client.EVM2AnyMessage({
+            receiver: abi.encode(_receiver), // ABI-encoded receiver address
+            data: _user_info, // No data
+            tokenAmounts: tokenAmounts, // The amount and type of token being transferred
+            extraArgs: Client._argsToBytes(
+                // Additional arguments, setting gas limit and allowing out-of-order execution.
+                // Best Practice: For simplicity, the values are hardcoded. It is advisable to use a more dynamic approach
+                // where you set the extra arguments off-chain. This allows adaptation depending on the lanes, messages,
+                // and ensures compatibility with future CCIP upgrades. Read more about it here: https://docs.chain.link/ccip/best-practices#using-extraargs
+                Client.EVMExtraArgsV2({
+                    gasLimit: 0, // Gas limit for the callback on the destination chain
+                    allowOutOfOrderExecution: true // Allows the message to be executed out of order relative to other messages from the same sender
+                })
+            ),
+            // Set the feeToken to a feeTokenAddress, indicating specific asset will be used for fees
+            feeToken: _feeTokenAddress
+        });
+    }
 }
