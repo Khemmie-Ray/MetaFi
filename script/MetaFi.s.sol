@@ -17,3 +17,5 @@ contract MetaFIScript is Script {
         vm.stopBroadcast();
     }
 }
+
+//  forge install smartcontractkit/chainlink --no-commit

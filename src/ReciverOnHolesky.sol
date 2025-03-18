@@ -1,5 +1,9 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.26;
+
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
 
 interface IWETH {
     function deposit() external payable;
@@ -10,17 +14,23 @@ interface IWETH {
 
 interface ILido {
     function submit(address _referral) external payable returns (uint256);
+    function withdraw(uint256 stETHAmount) external returns (uint256 ethReceived);
 }
 
 interface IEigenLayer {
     function deposit(address token, uint256 amount) external;
+    function stakedBalance(address staker) external view returns (uint256);
+    function withdraw(address token, uint256 shares) external;
+    function claimRewards(address token) external returns (uint256 rewardsClaimed);
+    function getTotalStaked(address staker) external view returns (uint256);
 }
 
 contract HoleskyStaker is CCIPReceiver {
     // mapping(address => uint256) public userBalances;
-    address public immutable lido;
-    address public immutable eigenLayer;
+    ILido public immutable lido;
+    IEigenLayer public immutable eigenLayer;
     IWETH public immutable WETH;
+    ERC20 public lstToken;
 
     // Tracks user deposits (ETH → stETH)
     mapping(address => uint256) public userEthDeposit;
@@ -39,10 +49,13 @@ contract HoleskyStaker is CCIPReceiver {
 
     /// @notice Constructor initializes the contract with the router address.
     /// @param router The address of the router contract.
-    constructor(address router, address _weth, address _lido, address _eigenLayer) CCIPReceiver(router) {
+    constructor(address router, address _weth, address _lido, address _eigenLayer, address _lstToken)
+        CCIPReceiver(router)
+    {
         WETH = IWETH(_weth);
-        lido = _lido;
-        eigenLayer = _eigenLayer;
+        lido = ILido(_lido);
+        eigenLayer = IEigenLayer(_eigenLayer);
+        lstToken = ERC20(_lstToken);
     }
 
     /// handle a received message
@@ -54,15 +67,15 @@ contract HoleskyStaker is CCIPReceiver {
         uint256 stETHAmount = lido.submit{value: wethAmount}(address(0));
 
         uint256 stShares =
-            (totalStETHShares == 0) ? stETHAmount : (stETHAmount * totalStETHShares) / lido.balanceOf(address(this));
+            (totalStETHShares == 0) ? stETHAmount : (stETHAmount * totalStETHShares) / lstToken.balanceOf(address(this));
         userStETHShares[user] += stShares;
         totalStETHShares += stShares;
         // Stake stETH on EigenLayer
-        EigenLayer.deposit(address(Lido), stETHAmount);
+        eigenLayer.deposit(address(lido), stETHAmount);
 
         uint256 eigenShares = (totalEigenShares == 0)
             ? stETHAmount
-            : (stETHAmount * totalEigenShares) / eigenLayer.getStakedAmount(address(this));
+            : (stETHAmount * totalEigenShares) / eigenLayer.stakedBalance(address(this));
         userEigenShares[user] += eigenShares;
         totalEigenShares += eigenShares;
 
@@ -75,58 +88,94 @@ contract HoleskyStaker is CCIPReceiver {
         );
     }
 
-    function withdrawLidoRewards() external {
-        uint256 rewards = getUserLidoRewards(msg.sender) - userEthDeposit[msg.sender];
+    function withdrawLido(uint256 amount) public {
+        require(userEthDeposit[msg.sender] >= amount, "Insufficient deposit");
+
+        uint256 userShares = userStETHShares[msg.sender];
+        uint256 totalShares = totalStETHShares;
+
+        uint256 withdrawableStETH = (amount * totalShares) / userShares;
+
+        require(withdrawableStETH > 0, "Nothing to withdraw");
+
+        // Unstake stETH and convert back to ETH
+        uint256 ethReceived = lido.withdraw(withdrawableStETH);
+
+        // Update user balances
+        userEthDeposit[msg.sender] -= amount;
+        userStETHShares[msg.sender] -= withdrawableStETH;
+        totalStETHShares -= withdrawableStETH;
+
+        // Send ETH back to user
+        payable(msg.sender).transfer(ethReceived);
+    }
+
+    function withdrawLidoRewards() public {
+        uint256 rewards = getUserLidoRewards(msg.sender);
         require(rewards > 0, "No rewards available");
 
         userStETHShares[msg.sender] -= rewards;
         totalStETHShares -= rewards;
 
-        lido.transfer(msg.sender, rewards);
+        // Transfer rewards as stETH
+        lstToken.transfer(msg.sender, rewards);
     }
 
-    function withdrawEigenRewards() external {
+    function withdrawEigen(uint256 shares) public {
+        require(userEigenShares[msg.sender] >= shares, "Insufficient shares");
+
+        uint256 withdrawableStETH = (shares * totalEigenShares) / userEigenShares[msg.sender];
+
+        require(withdrawableStETH > 0, "Nothing to withdraw");
+
+        // Withdraw stETH from EigenLayer
+        eigenLayer.withdraw(address(lstToken), shares);
+
+        // Convert stETH to ETH
+        uint256 ethReceived = lido.withdraw(withdrawableStETH);
+
+        // Update balances
+        userEigenShares[msg.sender] -= shares;
+        totalEigenShares -= shares;
+
+        // Send ETH to user
+        payable(msg.sender).transfer(ethReceived);
+    }
+
+    function withdrawEigenRewards() public {
         uint256 rewards = getUserEigenRewards(msg.sender);
         require(rewards > 0, "No rewards available");
 
-        userEigenShares[msg.sender] -= rewards;
-        totalEigenShares -= rewards;
+        // Claim rewards from EigenLayer as stETH
+        uint256 stETHRewards = eigenLayer.claimRewards(address(lstToken));
 
-        eigenLayer.withdrawRewards(msg.sender, rewards);
+        userEigenShares[msg.sender] -= stETHRewards;
+        totalEigenShares -= stETHRewards;
+
+        // Transfer rewards as stETH
+        lstToken.transfer(msg.sender, stETHRewards);
     }
 
-    function withdrawFromEigenAndLido() {
+    function withdrawFromEigenAndLido() public {
         withdrawEigenRewards();
         withdrawLidoRewards();
     }
 
     function getUserLidoRewards(address user) public view returns (uint256) {
-        uint256 totalStETH = lido.balanceOf(address(this));
+        uint256 totalStETH = lstToken.balanceOf(address(this));
         uint256 userShares = userStETHShares[user];
 
         return (userShares * totalStETH) / totalStETHShares;
     }
 
     function getUserEigenRewards(address user) public view returns (uint256) {
-        uint256 totalEigenRewards = eigenLayer.getRewards(address(this));
+        uint256 totalEigenAssets = eigenLayer.getTotalStaked(address(this)); // Contract's total assets
         uint256 userShares = userEigenShares[user];
 
-        return (userShares * totalEigenRewards) / totalEigenShares;
+        if (totalEigenShares == 0 || userShares == 0) {
+            return 0; // Avoid division by zero
+        }
+
+        return (userShares * totalEigenAssets) / totalEigenShares;
     }
-
-    // function ccipReceive(bytes calldata message) external override {
-    //     (address user, uint256 wethAmount) = abi.decode(message, (address, uint256));
-
-    //     // Convert WETH to ETH
-    //     WETH.withdraw(wethAmount);
-
-    //     // Stake ETH on Lido
-    //     uint256 stETHAmount = Lido.submit{value: wethAmount}(address(0));
-
-    //     // Stake stETH on EigenLayer
-    //     EigenLayer.deposit(address(Lido), stETHAmount);
-
-    //     // Track user balance
-    //     userBalances[user] += stETHAmount;
-    // }
 }
