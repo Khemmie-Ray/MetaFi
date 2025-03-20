@@ -119,7 +119,7 @@ contract MetaFi is BaseHook {
             // // Send the message through the router and store the returned message ID
             // bytes32 messageId = s_router.ccipSend{value: fees}(destinationChainSelector, evm2AnyMessage); uncomment later
 
-            emit MessageID(messageId);
+            // emit MessageID(messageId);
         }
         return (this.afterSwap.selector, 0);
     }
