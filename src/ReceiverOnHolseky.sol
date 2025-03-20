@@ -46,9 +46,10 @@ contract HoleskyStaker is CCIPReceiver {
     event MessageReceived(bytes32 indexed messageId, uint64 indexed sourceChainSelector, address sender, bytes data);
 
     bytes32 private s_lastReceivedMessageId; // Store the last received messageId.
-
+    // 0xb9531b46fE8808fB3659e39704953c2B1112DD43 router
     /// @notice Constructor initializes the contract with the router address.
     /// @param router The address of the router contract.
+
     constructor(address router, address _weth, address _lido, address _eigenLayer, address _lstToken)
         CCIPReceiver(router)
     {

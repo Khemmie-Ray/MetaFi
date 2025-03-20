@@ -22,6 +22,7 @@ import {CurrencySettler} from "v4-periphery/lib/v4-core/test/utils/CurrencySettl
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
 import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/OwnerIsCreator.sol";
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
+import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
 
 import {IERC20} from
     "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.3/contracts/token/ERC20/IERC20.sol";
@@ -43,20 +44,27 @@ contract MetaFi is BaseHook {
     using CurrencyLibrary for Currency;
     using BalanceDeltaLibrary for BalanceDelta;
 
-    uint64 _destinationChainSelector;
+    uint64 destinationChainSelector;
     IRouterClient private s_router;
     IERC20 private s_linkToken;
     address payable weth;
     address public receiverContract;
 
     // Initialize BaseHook and ERC20
-    constructor(IPoolManager _manager, address _router, address _link, address payable _weth, address _receiverContract)
-        BaseHook(_manager)
-    {
-        // s_router = IRouterClient(_router);
+    constructor(IPoolManager _manager) BaseHook(_manager) {}
+
+    function setters(
+        address _router,
+        address _link,
+        address _weth,
+        address _receiverContract,
+        uint64 _destinationChainSelector
+    ) public {
+        s_router = IRouterClient(_router);
         s_linkToken = IERC20(_link);
-        weth = _weth;
+        weth = payable(_weth);
         receiverContract = _receiverContract;
+        destinationChainSelector = _destinationChainSelector;
     }
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
@@ -65,8 +73,8 @@ contract MetaFi is BaseHook {
             afterInitialize: false,
             beforeAddLiquidity: false,
             beforeRemoveLiquidity: false,
-            afterAddLiquidity: true,
-            afterRemoveLiquidity: true,
+            afterAddLiquidity: false,
+            afterRemoveLiquidity: false,
             beforeSwap: false,
             afterSwap: true,
             beforeDonate: false,
@@ -91,27 +99,29 @@ contract MetaFi is BaseHook {
             int256 wethDelta = (Currency.unwrap(key.currency1)) == address(weth) ? delta.amount1() : delta.amount0();
             // if (wethDelta <= 0) return bytes4(0);
             // ccip and stake on Eigen...
-
+            console2.log("wethdelta", IERC20(weth).balanceOf(address(this)));
             Client.EVM2AnyMessage memory evm2AnyMessage = _buildCCIPMessage(
                 receiverContract,
-                address(weth),
+                address(weth), // native eth....
                 uint256(wethDelta),
                 abi.encode(msg.sender, wethDelta), // hopefully owner here
                 address(0)
             );
 
-            uint256 fees = s_router.getFee(_destinationChainSelector, evm2AnyMessage);
+            uint256 fees = s_router.getFee(destinationChainSelector, evm2AnyMessage);
 
-            //    s_linkToken.approve(address(s_router), fees);
+            // require(fees > address(this).balance, "NotEnoughBalance(address(this).balance, fees");
+            // //    s_linkToken.approve(address(s_router), fees);
 
-            // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
+            // // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
             IERC20(weth).approve(address(s_router), uint256(wethDelta));
-
-            // Send the message through the router and store the returned message ID
-            bytes32 messageId = s_router.ccipSend{value: fees}(_destinationChainSelector, evm2AnyMessage);
+            // IWETH9(weth).withdraw(uint256(wethDelta));
+            // // Send the message through the router and store the returned message ID
+            // bytes32 messageId = s_router.ccipSend{value: fees}(destinationChainSelector, evm2AnyMessage); uncomment later
 
             emit MessageID(messageId);
         }
+        return (this.afterSwap.selector, 0);
     }
 
     function _buildCCIPMessage(
@@ -144,4 +154,6 @@ contract MetaFi is BaseHook {
             feeToken: _feeTokenAddress
         });
     }
+
+    receive() external payable {}
 }
