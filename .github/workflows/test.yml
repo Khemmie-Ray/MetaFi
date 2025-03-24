@@ -41,4 +41,4 @@ jobs:
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
         run: |
-         forge test --fork-url $RPC_URL -vvv
+         forge test --fork-url $RPC_URL -vvvvv

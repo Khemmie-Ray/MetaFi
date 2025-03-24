@@ -96,6 +96,13 @@ contract TestPointsHook is Test, Deployers {
         int24 tickSpacing = 60;
         (PoolKey memory key2, PoolId id2) =
             initPoolAndAddLiquidity(token0, Currency.wrap(weth), IHooks(hookAddress), fee, 1 << 96);
+        bool zeroForOne = true;
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: zeroForOne,
+            amountSpecified: 1 ether,
+            sqrtPriceLimitX96: zeroForOne ? MIN_PRICE_LIMIT : MAX_PRICE_LIMIT
+        });
+        metaFi.metaFiSwap(key2, params, abi.encode(true));
         swap(key2, true, 1 ether, abi.encode(true));
         vm.stopBroadcast();
     }

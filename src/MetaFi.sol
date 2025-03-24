@@ -124,6 +124,23 @@ contract MetaFi is BaseHook {
         return (this.afterSwap.selector, 0);
     }
 
+    function metaFiSwap(PoolKey memory key, IPoolManager.SwapParams memory params, bytes calldata hookData)
+        external
+        returns (BalanceDelta swapDelta)
+    {
+        swapDelta = poolManager.swap(key, params, hookData);
+
+        bool stakeOnEigen = abi.decode(hookData, (bool));
+        if (!stakeOnEigen) {
+            if (swapDelta.amount0() > 0) {
+                IERC20(Currency.unwrap(key.currency0)).transfer(msg.sender, uint256(int256(swapDelta.amount0())));
+            }
+            if (swapDelta.amount1() > 0) {
+                IERC20(Currency.unwrap(key.currency1)).transfer(msg.sender, uint256(int256(swapDelta.amount1())));
+            }
+        }
+    }
+
     function _buildCCIPMessage(
         address _receiver,
         address _token,
