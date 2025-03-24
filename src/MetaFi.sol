@@ -55,6 +55,12 @@ contract MetaFi is BaseHook {
         uint256 amount;
     }
 
+    struct CallbackData {
+        PoolKey key;
+        IPoolManager.SwapParams params;
+        bytes hookData;
+    }
+
     mapping(address => SwapInfo) public pendingTransfers;
 
     // Initialize BaseHook and ERC20
@@ -119,23 +125,46 @@ contract MetaFi is BaseHook {
         return (this.afterSwap.selector, 0);
     }
 
+    // function metaFiSwap(PoolKey memory key, IPoolManager.SwapParams memory params, bytes calldata hookData)
+    //     external
+    //     returns (BalanceDelta swapDelta)
+    // {
+    //     swapDelta = poolManager.swap(key, params, hookData);
+
+    //     // bool stakeOnEigen = abi.decode(hookData, (bool));
+    //     // if (!stakeOnEigen) {
+    //     //     if (swapDelta.amount0() > 0) {
+    //     //         IERC20(Currency.unwrap(key.currency0)).transfer(msg.sender, uint256(int256(swapDelta.amount0())));
+    //     //     }
+    //     //     if (swapDelta.amount1() > 0) {
+    //     //         IERC20(Currency.unwrap(key.currency1)).transfer(msg.sender, uint256(int256(swapDelta.amount1())));
+    //     //     }
+    //     // } else {
+    //     //     ccip(key);
+    //     // }
+    // }
+
     function metaFiSwap(PoolKey memory key, IPoolManager.SwapParams memory params, bytes calldata hookData)
         external
         returns (BalanceDelta swapDelta)
     {
-        swapDelta = poolManager.swap(key, params, hookData);
+        // Encode callback data
+        bytes memory callbackData = abi.encode(CallbackData(key, params, hookData));
 
-        // bool stakeOnEigen = abi.decode(hookData, (bool));
-        // if (!stakeOnEigen) {
-        //     if (swapDelta.amount0() > 0) {
-        //         IERC20(Currency.unwrap(key.currency0)).transfer(msg.sender, uint256(int256(swapDelta.amount0())));
-        //     }
-        //     if (swapDelta.amount1() > 0) {
-        //         IERC20(Currency.unwrap(key.currency1)).transfer(msg.sender, uint256(int256(swapDelta.amount1())));
-        //     }
-        // } else {
-        //     ccip(key);
-        // }
+        // Call `unlock()`, which triggers `unlockCallback()`
+        swapDelta = abi.decode(poolManager.unlock(callbackData), (BalanceDelta));
+    }
+
+    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+        require(msg.sender == address(poolManager), "Only PoolManager can call");
+
+        // Decode the callback data
+        CallbackData memory callbackData = abi.decode(data, (CallbackData));
+
+        // Execute the swap inside the callback
+        BalanceDelta swapDelta = poolManager.swap(callbackData.key, callbackData.params, callbackData.hookData);
+
+        return abi.encode(swapDelta);
     }
 
     function ccip(PoolKey memory key) internal {
