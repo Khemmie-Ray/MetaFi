@@ -50,6 +50,13 @@ contract MetaFi is BaseHook {
     address payable weth;
     address public receiverContract;
 
+    struct SwapInfo {
+        address token;
+        uint256 amount;
+    }
+
+    mapping(address => SwapInfo) public pendingTransfers;
+
     // Initialize BaseHook and ERC20
     constructor(IPoolManager _manager) BaseHook(_manager) {}
 
@@ -95,32 +102,20 @@ contract MetaFi is BaseHook {
     ) internal override returns (bytes4, int128) {
         bool stakeOnEigen = abi.decode(extraData, (bool));
 
-        if (stakeOnEigen) {
-            int256 wethDelta = (Currency.unwrap(key.currency1)) == address(weth) ? delta.amount1() : delta.amount0();
-            // if (wethDelta <= 0) return bytes4(0);
-            // ccip and stake on Eigen...
-            console2.log("wethdelta", IERC20(weth).balanceOf(address(this)));
-            Client.EVM2AnyMessage memory evm2AnyMessage = _buildCCIPMessage(
-                receiverContract,
-                address(weth), // native eth....
-                uint256(wethDelta),
-                abi.encode(msg.sender, wethDelta), // hopefully owner here
-                address(0)
-            );
+        uint256 amountReceived;
+        address tokenReceived;
 
-            uint256 fees = s_router.getFee(destinationChainSelector, evm2AnyMessage);
-
-            // require(fees > address(this).balance, "NotEnoughBalance(address(this).balance, fees");
-            // //    s_linkToken.approve(address(s_router), fees);
-
-            // // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
-            IERC20(weth).approve(address(s_router), uint256(wethDelta));
-            // IWETH9(weth).withdraw(uint256(wethDelta));
-            // // Send the message through the router and store the returned message ID
-            // bytes32 messageId = s_router.ccipSend{value: fees}(destinationChainSelector, evm2AnyMessage); uncomment later
-
-            // emit MessageID(messageId);
+        if (delta.amount0() > 0) {
+            amountReceived = uint256(int256(delta.amount0()));
+            tokenReceived = Currency.unwrap(key.currency0);
+        } else {
+            amountReceived = uint256(int256(delta.amount1()));
+            tokenReceived = Currency.unwrap(key.currency1);
         }
+
+        // Store the swap info
+        pendingTransfers[sender] = SwapInfo({token: tokenReceived, amount: amountReceived});
+
         return (this.afterSwap.selector, 0);
     }
 
@@ -138,7 +133,37 @@ contract MetaFi is BaseHook {
             if (swapDelta.amount1() > 0) {
                 IERC20(Currency.unwrap(key.currency1)).transfer(msg.sender, uint256(int256(swapDelta.amount1())));
             }
+        } else {
+            ccip(key);
         }
+    }
+
+    function ccip(PoolKey memory key) internal {
+        SwapInfo memory info = pendingTransfers[msg.sender];
+        //   int256 wethDelta = (Currency.unwrap(key.currency1)) == address(weth) ? delta.amount1() : delta.amount0();
+        // if (wethDelta <= 0) return bytes4(0);
+        // ccip and stake on Eigen...
+        console2.log("wethdelta", IERC20(weth).balanceOf(address(this)));
+        Client.EVM2AnyMessage memory evm2AnyMessage = _buildCCIPMessage(
+            receiverContract,
+            address(weth), // native eth....
+            uint256(info.amount),
+            abi.encode(msg.sender, info.amount), // hopefully owner here
+            address(0)
+        );
+
+        uint256 fees = s_router.getFee(destinationChainSelector, evm2AnyMessage);
+
+        // require(fees > address(this).balance, "NotEnoughBalance(address(this).balance, fees");
+        // //    s_linkToken.approve(address(s_router), fees);
+
+        // // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
+        IERC20(weth).approve(address(s_router), uint256(info.amount));
+        // IWETH9(weth).withdraw(uint256(wethDelta));
+        // // Send the message through the router and store the returned message ID
+        // bytes32 messageId = s_router.ccipSend{value: fees}(destinationChainSelector, evm2AnyMessage); uncomment later
+
+        // emit MessageID(messageId);
     }
 
     function _buildCCIPMessage(

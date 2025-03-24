@@ -65,7 +65,7 @@ contract TestPointsHook is Test, Deployers {
         (bool success, bytes memory data) = address(metaFi).call{value: 1 ether}("");
         require(success, "failed deposit");
         MockWeth(payable(weth)).deposit{value: amountOfWethToMint}();
-        MockERC20(weth).transfer(address(metaFi), 1 ether);
+        // MockERC20(weth).transfer(address(metaFi), 1 ether);
 
         address[9] memory toApprove = [
             address(swapRouter),
