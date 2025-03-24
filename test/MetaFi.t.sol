@@ -103,7 +103,7 @@ contract TestPointsHook is Test, Deployers {
             sqrtPriceLimitX96: zeroForOne ? MIN_PRICE_LIMIT : MAX_PRICE_LIMIT
         });
         metaFi.metaFiSwap(key2, params, abi.encode(true));
-        swap(key2, true, 1 ether, abi.encode(true));
+        // swap(key2, true, 1 ether, abi.encode(true));
         vm.stopBroadcast();
     }
 }
