@@ -2,10 +2,10 @@
 pragma solidity ^0.8.26;
 
 import {Script, console} from "forge-std/Script.sol";
-import {MetaFi} from "../src/MetaFi.sol";
+import {MetaFiHook} from "../src/MetaFiHook.sol";
 
 contract MetaFIScript is Script {
-    MetaFi public metafi;
+    MetaFiHook public metaFiHook;
 
     function setUp() public {}
 

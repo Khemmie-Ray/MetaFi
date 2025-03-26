@@ -21,12 +21,13 @@ import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {V4Quoter} from "v4-periphery/src/lens/V4Quoter.sol";
 import "forge-std/console.sol";
-import {MetaFi} from "../src/MetaFi.sol";
+import {MetaFiHook} from "../src/MetaFiHook.sol";
+import {MetaFiRouter} from "../src/MetaFiRouter.sol";
 import {MockWeth} from "./mock/mockWeth.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
 contract TestPointsHook is Test, Deployers {
-    MetaFi metaFi;
+    MetaFiHook metaFiHook;
     // 0xB18eE11849a805651aC5D456034FD6352cfF635d
 
     using StateLibrary for IPoolManager;
@@ -38,6 +39,7 @@ contract TestPointsHook is Test, Deployers {
     Currency token0;
     Currency token1;
     V4Quoter public quoter;
+    MetaFiRouter metaFiRouter;
     address weth = 0xE591bf0A0CF924A0674d7792db046B23CEbF5f34;
     address router = 0x2a9C5afB0d0e4BAb2BCdaE109EC4b0c4Be15a165; // arb sep
     address link = 0xb1D4538B4571d411F07960EF2838Ce337FE1E80E;
@@ -53,15 +55,16 @@ contract TestPointsHook is Test, Deployers {
         vm.startPrank(mockUser);
         console.log(address(mockUser).balance);
         quoter = new V4Quoter(manager);
+        metaFiRouter = new MetaFiRouter(manager);
         (token0, token1) = deployMintAndApprove2Currencies();
         MockERC20(Currency.unwrap(token0)).mint(mockUser, 50 ether);
         uint160 flags = uint160(Hooks.AFTER_SWAP_FLAG);
         hookAddress = address(flags);
-        deployCodeTo("MetaFi.sol", abi.encode(manager), hookAddress);
-        metaFi = MetaFi(payable(hookAddress));
-        MockERC20(Currency.unwrap(token0)).approve(address(metaFi), type(uint256).max);
+        deployCodeTo("MetaFiHook.sol", abi.encode(manager), hookAddress);
+        metaFiHook = MetaFiHook(payable(hookAddress));
+        MockERC20(Currency.unwrap(token0)).approve(address(metaFiRouter), type(uint256).max);
 
-        (bool success, bytes memory data) = address(metaFi).call{value: 1 ether}("");
+        (bool success, bytes memory data) = address(metaFiRouter).call{value: 1 ether}("");
         require(success, "failed deposit");
         address[9] memory toApprove = [
             address(swapRouter),
@@ -82,7 +85,7 @@ contract TestPointsHook is Test, Deployers {
         console.log("weth balance", MockWeth(payable(weth)).balanceOf(mockUser));
 
         // MockWeth(payable(weth)).approve();
-        metaFi.setters(router, link, weth, receiver, destinationChainSelector);
+        metaFiRouter.setters(router, link, weth, receiver, destinationChainSelector);
         vm.stopPrank();
     }
 
@@ -91,7 +94,7 @@ contract TestPointsHook is Test, Deployers {
         uint24 fee = 3000; // 0.3%
         int24 tickSpacing = 60;
         (PoolKey memory key2, PoolId id2) =
-            initPoolAndAddLiquidity(token0, Currency.wrap(weth), IHooks(address(metaFi)), fee, 1 << 96);
+            initPoolAndAddLiquidity(token0, Currency.wrap(weth), IHooks(address(metaFiHook)), fee, 1 << 96);
         bool zeroForOne = true;
         IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
             zeroForOne: zeroForOne,
@@ -99,18 +102,20 @@ contract TestPointsHook is Test, Deployers {
             sqrtPriceLimitX96: zeroForOne ? MIN_PRICE_LIMIT : MAX_PRICE_LIMIT
         });
         console.log("hook", address(key2.hooks));
-        console.log("Expected MetaFi address:", address(metaFi));
-        require(address(key2.hooks) == address(metaFi), "Hook address mismatch!");
+        console.log("Expected MetaFi address:", address(metaFiHook));
+        require(address(key2.hooks) == address(metaFiHook), "Hook address mismatch!");
         console.log(
             "mock token 0 && weth before balance",
+            MockWeth(payable(weth)).balanceOf(mockUser),
             MockERC20(Currency.unwrap(token0)).balanceOf(mockUser),
-            MockWeth(payable(weth)).balanceOf(address(metaFi))
+            MockWeth(payable(weth)).balanceOf(address(metaFiHook))
         );
-        metaFi.metaFiSwap(key2, params, abi.encode(true));
+        metaFiRouter.metaFiSwap(key2, params, abi.encode(true));
         console.log(
             "mockweth after balance",
+            MockWeth(payable(weth)).balanceOf(mockUser),
             MockERC20(Currency.unwrap(token0)).balanceOf(mockUser),
-            MockWeth(payable(weth)).balanceOf(address(metaFi))
+            MockWeth(payable(weth)).balanceOf(address(metaFiHook))
         );
         // swap(key2, true, 1 ether, abi.encode(true));
         vm.stopBroadcast();
