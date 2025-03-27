@@ -9,12 +9,31 @@ MetaFi is a cross-chain Uniswap v4 hook that enables Liquidity Providers (LPs) t
 - **Capital Efficiency:** Instead of LP tokens sitting idle, they are put to work securing decentralized infrastructure.
 
 ## How It Works
-1. **Liquidity Provision:** Users deposit liquidity into a Uniswap v4 pool.
-2. **Restaking Mechanism:** Instead of leaving LP tokens idle, they are restaked via EigenLayer.
-3. **AVS Security Contribution:** The restaked LP tokens help secure an Actively Validated Service (AVS) such as:
-   - A decentralized price oracle
-   - A rollup sequencer
-4. **Rewards Distribution:** LPs continue to earn Uniswap swap fees while also receiving EigenLayer restaking rewards.
+
+### Swapping on Uniswap v4
+Users can swap tokens on Uniswap v4 as usual. Additionally, they have the option to stake their tokens for extra rewards.
+
+### Staking Process
+1. **Initial Staking on Lido**
+   - Before staking on EigenLayer, the tokens are first staked on Lido Finance.
+   - This step ensures users earn staking rewards from Lido (e.g., receiving stETH in return).
+
+2. **Restaking on EigenLayer**
+   - The staked tokens (e.g., stETH or equivalent) are then restaked via EigenLayer.
+   - This process enables any token to be used for staking.
+
+### Actively Validated Services (AVS) Contribution
+Restaked tokens contribute to securing Actively Validated Services (AVS) such as:
+- A decentralized price oracle
+- A rollup sequencer
+
+### Rewards Distribution
+Liquidity Providers (LPs) benefit in multiple ways:
+- Earn Uniswap v4 swap fees.
+- Receive Lido staking rewards.
+- Gain additional EigenLayer restaking rewards.
+
+By leveraging multiple staking layers, users maximize their yield while maintaining the liquidity benefits of Uniswap v4.
 
 ## Technology Track
 MetaFi is built under the sponsorship of:

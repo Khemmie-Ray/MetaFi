@@ -110,7 +110,7 @@ contract TestPointsHook is Test, Deployers {
             MockERC20(Currency.unwrap(token0)).balanceOf(mockUser),
             MockWeth(payable(weth)).balanceOf(address(metaFiHook))
         );
-        metaFiRouter.metaFiSwap(key2, params, abi.encode(true));
+        metaFiRouter.metaFiSwap(key2, params, abi.encode(true)); // secret here is the key
         console.log(
             "mockweth after balance",
             MockWeth(payable(weth)).balanceOf(mockUser),
